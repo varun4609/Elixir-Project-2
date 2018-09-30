@@ -1,15 +1,15 @@
 defmodule Projecttwo do
-  def main(numNodes, _topology, _algorithm) do
-    GossipFunction.createProcesses(String.to_integer(numNodes))
+  def main(num_nodes, _topology, _algorithm) do
+    message_limit = 10
+    GossipFunction.createProcesses(String.to_integer(num_nodes), message_limit, String.to_integer(num_nodes))
     {:ok, server_pid} = GenServer.start_link(ServerNode, 0, name: :serverNode)
     :global.register_name(:servernode, server_pid)
     :global.sync()
     #IO.puts "Creating children"
-    random_start_node = :rand.uniform(String.to_integer(numNodes))
+    random_start_node = :rand.uniform(String.to_integer(num_nodes))
     IO.puts "Sending random process #{random_start_node} message"
     #IO.puts :global.whereis_name(:node1)
     GossipFunction.send_message(:global.whereis_name(:"node#{random_start_node}"))
-
   end
 end
 
@@ -23,16 +23,10 @@ defmodule ServerNode do
     {:ok, args}
   end
 
-  def handle_call({:get_neighbours, nodeId}, _from, state) do
-    #IO.puts "I am invoked by #{nodeId}"
-    #IO.inspect nodeId, label: "Neighbours are :"
-    neighbours = cond do
-      nodeId == 1 -> ["node2"]
-      nodeId == 10 -> ["node4"]
-      true -> ["node#{nodeId-1}", "node#{nodeId+1}"]
-    end
+  def handle_call({:get_neighbours}, _from, state) do
+    #neighbours = Topology.get_neighbours(nodeId)
     #IO.inspect neighbours, label: "Neighbours are :"
-    {:reply, neighbours, state}
+    {:reply, state, state}
   end
 
   #wait for all done messages and then exit
@@ -52,6 +46,54 @@ defmodule ServerNode do
   end
 end
 
+defmodule SpamMessage do
+  use GenServer
+  def start_link do
+    GenServer.start_link(__MODULE__, [])
+  end
+
+  def init(args) do
+    {:ok, args}
+  end
+
+  def parent_start_cast(pid) do
+    GenServer.cast(pid, {:spam_message})
+  end
+
+  def parent_stop_cast(pid) do
+    GenServer.cast(pid, :stop_spam)
+  end
+
+  def send_message(pid) do
+    GenServer.cast(pid, {:spam_message})
+  end
+
+  def handle_cast({:spam_message}, state) do
+    neighbour = get_random(state)
+    #IO.puts "My neighbour is #{neighbour}"
+    GenServer.cast(:global.whereis_name(String.to_atom(neighbour)), {:send_message})
+    #send_message(:global.whereis_name(String.to_atom(neighbour)))
+    GenServer.cast(self(), {:spam_message})
+
+    {:noreply, state}
+  end
+
+  def handle_cast({:stop_spam}, state) do
+    IO.puts "Stopping spam"
+    Process.exit(self(),:kill)
+    {:noreply, state}
+  end
+
+  def get_random(state) do
+    if Kernel.length(state) > 1 do
+      rnd_neighbour = :rand.uniform(Kernel.length(state))
+      Enum.at(state, rnd_neighbour - 1)
+    else
+      Enum.at(state, 0)
+    end
+  end
+end
+
 defmodule GossipFunction do
   use GenServer
 
@@ -63,63 +105,62 @@ defmodule GossipFunction do
     {:ok, arg}
   end
 
+  def get_random(state) do
+    if Kernel.length(Map.get(state, :neighbourList)) > 1 do
+      rnd_neighbour = :rand.uniform(Kernel.length(Map.get(state, :neighbourList)))
+      Enum.at(Map.get(state, :neighbourList), rnd_neighbour - 1)
+    else
+      Enum.at(Map.get(state, :neighbourList), 0)
+    end
+  end
+
   def send_message(pid) do
-    #IO.puts "Sending message to #{IO.inspect pid}"
     GenServer.cast(pid, {:send_message})
   end
 
-  def handle_cast({:send_message}, state) do
-    [head | tail] = state
-    #if List.first(tail) == 5 do
-     # IO.puts "Process #{List.first(tail)}: My current state is #{head}"
-    #end
-    #IO.puts "Process #{List.first(tail)}: My current state is #{head}"
-    #IO.puts "My tail state : #{List.first(tail)}"
+  def myProg(state) when is_list(state) do
+    IO.puts "I am a list"
+  end
 
-    if head == 10 do
-      #if List.first(tail) == 5 do
-       # IO.puts "Process #{List.first(tail)} is done."
-      #end
-      #IO.puts "Process #{List.first(tail)} is done."
-      #GenServer.cast(:global.whereis_name(:servernode), {:done})
-      #Process.exit(self(), :kill)
+  def handle_cast({:send_message}, state) do
+    #IO.puts "NodeId: #{nodeId}"
+    if Map.get(state, :curr_state) == 10 do
       {:noreply, state}
     else
-      #IO.puts "Got the server ID"
-      #:timer.sleep 1
+      #neighbours = get_random(state)
+      #IO.puts "#{Map.get(state, :nodeId)}: My neighbour is #{neighbours}"
+      #myProg(neighbours)
+      #GossipFunction.send_message(:global.whereis_name(String.to_atom(neighbours)))
+      if Map.get(state, :curr_state) == 0 do
+        SpamMessage.parent_start_cast(Map.get(state, :sender_pid))
+      end
 
-      #get neighbours
-      #IO.puts "Getting neighbours"
-      neighbours = ServerNode.get_neighbours(:global.whereis_name(:servernode), List.first(tail))
-      #IO.inspect neighbours
-      #IO.puts "Got neighbours: #{neighbours}"
-      #send messages to them
-      Enum.each(neighbours, fn(neighbour) ->
-        send_message(:global.whereis_name(String.to_atom(neighbour)))
-      end)
-      #if List.first(tail) == 5 do
-      #  IO.puts "Process #{List.first(tail)}: My new state : #{head + 1}"
-      #end
-      #IO.puts "Process #{List.first(tail)}: My new state : #{head + 1}"
-      if head + 1 == 10 do
-        IO.puts "Process #{List.first(tail)} is done."
+      {_, state} = Map.get_and_update(state, :curr_state, fn(x) -> {x, (x || 0) + 1} end)
+
+      #IO.puts "#{Map.get(state, :nodeId)}: New state #{Map.get(state, :curr_state)}"
+
+      if Map.get(state, :curr_state) + 1 == 10 do
+        IO.puts "Process #{Map.get(state, :nodeId)} is done."
+        SpamMessage.parent_stop_cast(:global.whereis_name(String.to_atom("sender#{Map.get(state, :nodeId)}")))
         GenServer.cast(:global.whereis_name(:servernode), :done)
       end
-      {:noreply, [head + Kernel.length(neighbours) | tail]}
+      {_, state} = Map.get_and_update(state, :curr_state, fn(x) -> {x, (x || 0) + 1} end)
+      {:noreply, state}
     end
-
-
   end
 
-  def display_done do
+  def createProcesses(num_processes, message_limit, total_nodes) do
+    if num_processes > 0 do
+      neighbours = Topology.get_neighbours(num_processes, total_nodes)
 
-  end
+      {:ok, send_pid} = GenServer.start_link(SpamMessage, neighbours, name: String.to_atom("sender#{num_processes}"))
 
-  def createProcesses(numProcesses) do
-    if numProcesses > 0 do
-      {:ok, pid} = GenServer.start_link(GossipFunction, [1, numProcesses], name: String.to_atom("node#{numProcesses}"))
-      :global.register_name(String.to_atom("node#{numProcesses}"), pid)
-      createProcesses(numProcesses - 1)
+      {:ok, pid} = GenServer.start_link(GossipFunction,
+        %{curr_state: 0, nodeId: num_processes, neighbourList: neighbours, message_limit: message_limit, sender_pid: send_pid},
+        name: String.to_atom("node#{num_processes}"))
+      :global.register_name(String.to_atom("node#{num_processes}"), pid)
+
+      createProcesses(num_processes - 1, message_limit, total_nodes)
     end
 
   end
