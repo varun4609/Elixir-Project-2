@@ -1,15 +1,30 @@
 defmodule Projecttwo do
   def main(num_nodes, _topology, _algorithm) do
     message_limit = 10
-    GossipFunction.createProcesses(String.to_integer(num_nodes), message_limit, String.to_integer(num_nodes))
-    {:ok, server_pid} = GenServer.start_link(ServerNode, 0, name: :serverNode)
-    :global.register_name(:servernode, server_pid)
-    :global.sync()
-    #IO.puts "Creating children"
-    random_start_node = :rand.uniform(String.to_integer(num_nodes))
-    IO.puts "Sending random process #{random_start_node} message"
-    #IO.puts :global.whereis_name(:node1)
-    GossipFunction.send_message(:global.whereis_name(:"node#{random_start_node}"))
+    if (_topology == "rand2D")do
+      limit = :math.sqrt(String.to_integer(num_nodes))
+      step = 1/limit
+      
+      GossipFunction.generateNodes(String.to_integer(num_nodes), message_limit, limit, step)
+      #{:ok, pid2} = Genserver.start_link(TwoDServer, [])
+      #GenServer.cast(:global.whereis_name(:"node#{id}"), {:findNeigh})
+      ans = TwoDServer.assignNeigh(1, String.to_integer(num_nodes))
+      {:ok, server_pid} = GenServer.start_link(ServerNode, 0, name: :serverNode)
+      :global.register_name(:servernode, server_pid)
+      :global.sync()
+      random_start_node = :rand.uniform(String.to_integer(num_nodes))
+      IO.puts "Sending random2D process #{random_start_node} message"
+    else    
+      GossipFunction.createProcesses(String.to_integer(num_nodes), message_limit, String.to_integer(num_nodes))
+      {:ok, server_pid} = GenServer.start_link(ServerNode, 0, name: :serverNode)
+      :global.register_name(:servernode, server_pid)
+      :global.sync()
+      #IO.puts "Creating children"
+      random_start_node = :rand.uniform(String.to_integer(num_nodes))
+      IO.puts "Sending random process #{random_start_node} message"
+      #IO.puts :global.whereis_name(:node1)
+      GossipFunction.send_message(:global.whereis_name(:"node#{random_start_node}"))
+    end #if end
   end
 end
 
@@ -164,9 +179,36 @@ defmodule GossipFunction do
     end
 
   end
+
+  def generateNodes(num_processes, message_limit, limit, step) do
+    if num_processes > 0 do
+      neighbors = []
+      #IO.puts "#{granularity}"
+      xrand = :rand.uniform(limit)
+      yrand = :rand.uniform(limit)
+      x = (xrand * step)
+      y = (yrand * step)
+      {:ok, send_pid} = GenServer.start_link(SpamMessage, neighbors, name: String.to_atom("sender#{num_processes}"))
+      {:ok, pid} = GenServer.start_link(GossipFunction, 
+      %{x: x, y: y, nodeId: num_processes, neighbourList: neighbors, curr_state: 0, message_limit: message_limit, sender_pid: send_pid},
+      name: String.to_atom("node#{num_processes}"))
+      :global.register_name(String.to_atom("node#{num_processes}"), pid)
+      IO.puts "#{String.to_atom("node#{num_processes}")}"
+      generateNodes(num_processes - 1, message_limit, granularity)
+    end  
+  end
+
 end
 
 defmodule Topology do
+  def get_neighbours(nodeId, total_nodes) do
+    neighbours = cond do
+      nodeId == 1 -> ["node2"]
+      nodeId == total_nodes -> ["node#{total_nodes - 1}"]
+      true -> ["node#{nodeId-1}", "node#{nodeId+1}"]
+    end
+      neighbours
+  end
     def imp2Dloop(n, neighbor,l) do
         ran = :rand.uniform(n)
         if ran == l or Enum.member?(neighbor, ran) == true do
